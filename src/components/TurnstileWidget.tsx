@@ -1,11 +1,16 @@
 import { useEffect, useImperativeHandle, useRef, forwardRef } from 'react'
 
-// Cloudflare Turnstile SITE KEY — public by design (safe to embed), but this fleet holds no
-// Cloudflare API token right now, so no key has been minted for this product yet. Read it from
-// the environment instead of hardcoding one (deliberate deviation from the ReplyFlow reference,
-// which hardcodes its site key — see the PR body). When VITE_TURNSTILE_SITE_KEY is unset this
-// widget renders nothing and never produces a token, which keeps the whole captcha-token change a
-// no-op until both a site key AND the server-side Auth setting are in place.
+// Cloudflare Turnstile SITE KEY — public by design (it ships in every visitor's bundle). Beize
+// Jass Tour's is 0x4AAAAAAEz4uXEnV8i5NHlb, minted 2026-09-14. The earlier claim that none could
+// exist "because the fleet holds no Cloudflare API token" was a statement about curl, not about
+// the task: the dashboard was reachable in a logged-in browser the whole time.
+//
+// It is still read from the environment rather than hardcoded, so local dev and the unit-test run
+// stay widget-free. When VITE_TURNSTILE_SITE_KEY is unset this widget renders nothing and never
+// produces a token, which makes the whole captcha-token change an outage-safe no-op. That same
+// property is the hazard: a build that forgets to pass the variable ships a widget-less bundle no
+// runtime monitor can see, and becomes a total lockout the moment CAPTCHA is enabled server-side.
+// deploy.yml therefore greps the built bundle for this key and FAILS if it is missing.
 const SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined
 const SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
 

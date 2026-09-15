@@ -55,6 +55,33 @@ jobs:
           VITE_SUPABASE_URL: https://uyksotlmrlxhmyeopktl.supabase.co
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
           VITE_SUPABASE_PROJECT_ID: uyksotlmrlxhmyeopktl
+          # PUBLIC Cloudflare Turnstile site key for the Beize Jass Tour sign-in widget — same
+          # class of value as the two above: it ships in every visitor's bundle by design.
+          # Without this line the widget in src/components/TurnstileWidget.tsx renders NOTHING
+          # (deliberately a no-op when the key is unset) and every sign-in and signup goes out with
+          # no captcha token — a TOTAL customer lockout the moment security_captcha_enabled is
+          # switched on for uyksotlmrlxhmyeopktl. The step below refuses to let that ship.
+          VITE_TURNSTILE_SITE_KEY: ${{ secrets.VITE_TURNSTILE_SITE_KEY }}
+
+      - name: Assert the Turnstile site key actually landed in the bundle (blocking)
+        # Runs in `validate` as well as in `deploy` below, so a build that would ship without the
+        # captcha widget fails on EVERY push, not only on the manual production dispatch.
+        # `vite build` inlines VITE_* at BUILD time, so an empty, missing or misnamed secret
+        # produces a bundle with no widget at all — invisible to every runtime monitor, and a total
+        # lockout the instant half 2 is flipped. ReplyFlow hit exactly this shape: a dead sitekey
+        # behind green monitors. The site key is PUBLIC, so it can be pinned and compared literally.
+        run: |
+          set -euo pipefail
+          expected='0x4AAAAAAEz4uXEnV8i5NHlb'
+          if ! grep -rq "$expected" ./dist/; then
+            echo "FAIL - the Turnstile site key ($expected) is NOT in the built bundle."
+            echo "       vite build inlines VITE_* at build time; the repository secret"
+            echo "       VITE_TURNSTILE_SITE_KEY is empty, wrong, or was not passed to the build"
+            echo "       step above. Shipping this would render no captcha widget at all, and"
+            echo "       every sign-in would break the moment CAPTCHA is enabled on the project."
+            exit 1
+          fi
+          echo "ok - Turnstile site key is present in the bundle ($(grep -rl "$expected" ./dist/ | wc -l) file(s))."
 
   gate-security:
     if: github.event_name == 'workflow_dispatch'
@@ -175,6 +202,26 @@ jobs:
           VITE_SUPABASE_URL: https://uyksotlmrlxhmyeopktl.supabase.co
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
           VITE_SUPABASE_PROJECT_ID: uyksotlmrlxhmyeopktl
+          # PUBLIC Cloudflare Turnstile site key — see the identical block in `validate` above.
+          # This is the build that actually ships, so the assertion after it is the one that
+          # stands between a widget-less bundle and the FTP upload.
+          VITE_TURNSTILE_SITE_KEY: ${{ secrets.VITE_TURNSTILE_SITE_KEY }}
+
+      - name: Assert the Turnstile site key actually landed in the bundle (blocking)
+        # THE ONE THAT GATES THE UPLOAD. Everything below this step puts files on the live host, so
+        # a bundle with no captcha widget must die here rather than at the next sign-in.
+        run: |
+          set -euo pipefail
+          expected='0x4AAAAAAEz4uXEnV8i5NHlb'
+          if ! grep -rq "$expected" ./dist/; then
+            echo "FAIL - the Turnstile site key ($expected) is NOT in the production bundle."
+            echo "       vite build inlines VITE_* at build time; the repository secret"
+            echo "       VITE_TURNSTILE_SITE_KEY is empty, wrong, or was not passed to the build"
+            echo "       step above. Shipping this would render no captcha widget at all, and"
+            echo "       every sign-in would break the moment CAPTCHA is enabled on the project."
+            exit 1
+          fi
+          echo "ok - Turnstile site key is present in the production bundle ($(grep -rl "$expected" ./dist/ | wc -l) file(s))."
 
       - name: Install lftp
         run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
