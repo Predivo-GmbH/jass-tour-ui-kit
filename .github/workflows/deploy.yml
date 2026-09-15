@@ -81,8 +81,19 @@ jobs:
         with:
           node-version: 22
 
-      - name: Dependency audit (blocking at critical)
-        run: npm audit --audit-level=critical
+      - name: Dependency audit of what ships (blocking at high, production deps only)
+        # A RELEASE GATE JUDGES ONLY WHAT SHIPS (Roger, 2026-09-03). `--omit=dev` scopes this to the
+        # production dependency tree; the FULL tree, build tooling included, is covered by
+        # production-monitor's scheduled fleet dependency audit, which FILES WORK instead of blocking a
+        # deploy. Until 2026-09-15 no gate in the fleet carried it, and that was not theoretical: arivioo
+        # could not be promoted on 2026-09-14 because of a js-yaml advisory reachable only by running our
+        # own linter (eslint -> @eslint/eslintrc -> js-yaml).
+        # THE FLOOR IS RESTATED AT THE SAME TIME, because a scope change without one is how a gate quietly
+        # becomes decorative. Measured on this repo 2026-09-15, before the change: unscoped at high and
+        # scoped at high, so the floor could be raised and the gate got STRICTER on what customers run,
+        # not looser. Proven still to refuse: launchready a0b3a12^ (next 16.3.0 + sharp 0.35.3, both in
+        # the production tree) exits 1 under this exact command.
+        run: npm audit --omit=dev --audit-level=high
 
       # SAST - code-level security (fleet-hardening Wave 2, proven route from project-starter).
       # A different layer than npm audit (deps) + gitleaks (secrets in git): semgrep reads OUR
