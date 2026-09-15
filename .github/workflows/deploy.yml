@@ -44,6 +44,14 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # A GUARD IN THE TREE AND NOT IN A GATE IS NOT A GUARD. Playwright writes an ARIA snapshot
+      # of the page - the signed-in application, form-field contents included - for any test that
+      # ends with errors, gated on nothing but `errors.length > 0`, and no `use:` switch reaches
+      # it. This asserts every playwright*.config.* registers the stripper that removes it FIRST,
+      # and that outputDir is pinned off test-results itself. Needs no dependencies, no browser.
+      - name: The e2e suite keeps no error context on the runner
+        run: node --test test/the-runner-keeps-no-error-context.test.mjs
+
       - name: Test
         run: npm test -- --run
 
