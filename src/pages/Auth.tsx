@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePageTitle } from '@/hooks/usePageTitle';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { usePlayers } from '@/hooks/usePlayers';
+import TurnstileWidget, { type TurnstileHandle } from '@/components/TurnstileWidget';
 import { Spade, Lock, Mail, User, Loader2 } from 'lucide-react';
 
 export default function Auth() {
@@ -25,6 +26,11 @@ export default function Auth() {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
+  // Cloudflare Turnstile token for the /token (password login) GoTrue endpoint. Undefined until
+  // the widget solves — and stays undefined forever when VITE_TURNSTILE_SITE_KEY is not set, in
+  // which case this is a pure no-op (see TurnstileWidget.tsx and the PR body).
+  const [loginCaptchaToken, setLoginCaptchaToken] = useState<string | null>(null);
+  const loginTurnstileRef = useRef<TurnstileHandle>(null);
 
   // Signup state
   const [signupEmail, setSignupEmail] = useState('');
@@ -33,6 +39,9 @@ export default function Auth() {
   const [signupError, setSignupError] = useState('');
   const [signupLoading, setSignupLoading] = useState(false);
   const [signupSuccess, setSignupSuccess] = useState(false);
+  // Same as above, for the /signup GoTrue endpoint.
+  const [signupCaptchaToken, setSignupCaptchaToken] = useState<string | null>(null);
+  const signupTurnstileRef = useRef<TurnstileHandle>(null);
 
   const handleSharedPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,10 +73,17 @@ export default function Auth() {
     setLoginLoading(true);
     setLoginError('');
 
+    // captchaToken is threaded through to GoTrue's /token endpoint. It is IGNORED by the server
+    // until CAPTCHA is enabled in the project's Auth settings, so passing it (or not) is a no-op
+    // today — which is what makes shipping this client change outage-safe on its own.
     const { error } = await supabase.auth.signInWithPassword({
       email: loginEmail,
       password: loginPassword,
+      options: loginCaptchaToken ? { captchaToken: loginCaptchaToken } : undefined,
     });
+
+    // Turnstile tokens are single-use — get a fresh one for the next attempt regardless of outcome.
+    loginTurnstileRef.current?.reset();
 
     if (error) {
       setLoginError('E-Mail oder Passwort falsch');
@@ -89,10 +105,16 @@ export default function Auth() {
       return;
     }
 
+    // captchaToken is threaded through to GoTrue's /signup endpoint. Same no-op-until-server-enable
+    // shape as handleLogin above.
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: signupEmail,
       password: signupPassword,
+      options: signupCaptchaToken ? { captchaToken: signupCaptchaToken } : undefined,
     });
+
+    // Turnstile tokens are single-use — get a fresh one for the next attempt regardless of outcome.
+    signupTurnstileRef.current?.reset();
 
     if (authError) {
       setSignupError(authError.message);
@@ -195,6 +217,7 @@ export default function Auth() {
                 {loginError && (
                   <p className="text-sm text-destructive text-center" role="alert">{loginError}</p>
                 )}
+                <TurnstileWidget ref={loginTurnstileRef} onToken={setLoginCaptchaToken} />
                 <Button type="submit" className="w-full" disabled={loginLoading}>
                   {loginLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" aria-hidden="true" /> : null}
                   Anmelden
@@ -257,6 +280,7 @@ export default function Auth() {
                   {signupError && (
                     <p className="text-sm text-destructive text-center" role="alert">{signupError}</p>
                   )}
+                  <TurnstileWidget ref={signupTurnstileRef} onToken={setSignupCaptchaToken} />
                   <Button type="submit" className="w-full" disabled={signupLoading}>
                     {signupLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" aria-hidden="true" /> : null}
                     Registrieren

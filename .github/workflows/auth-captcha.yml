@@ -1,0 +1,82 @@
+name: Auth CAPTCHA switch
+
+# THE SETTING THAT IS THE FIX. Closing the unauthenticated sign-in-email hole has two halves and
+# only one is code. Half 2 is not a deploy — it is one project-wide GoTrue setting
+# (security_captcha_enabled + provider + secret). Nothing in this repo could reach it, so on
+# ReplyFlow that half sat undone behind a green deploy for four days while the row read "shipped".
+# This workflow is how Beize Jass Tour's gets flipped, read back and rolled back, by anyone, on the
+# record, with the management token only CI holds, and without a secret ever being rendered.
+#
+# THE PROJECT IS uyksotlmrlxhmyeopktl — the one deploy.yml hardcodes in every build and the one
+# that holds the real auth users. The retired duplicate dkxdlovwzsxnepoteebk is deliberately not
+# reachable from here (see scripts/auth-captcha.mjs); its email provider is already off.
+#
+# ORDER: the client half must be LIVE first — the sign-in and sign-up forms actually sending a
+# cf-turnstile-response — or enabling this locks every customer out of login and signup. deploy.yml
+# now asserts the site key is inlined in the shipped bundle, in BOTH the validate and the deploy
+# job, which is the machine-checkable half of that precondition.
+# ROLLBACK: run it again with mode=disable. Instant and total.
+
+on:
+  # A DAILY READ, BECAUSE THE ONLY OTHER WITNESS WAS THE THING IT BLOCKED.
+  # Measured on ReplyFlow 2026-09-11: production's switch was flipped ON and the fleet deploy page
+  # went on showing red for TWELVE HOURS against a pre-flip gate run. The cause is a deadlock — the
+  # guard ran in exactly two places, inside a production promotion and by hand, so the only run that
+  # could record the switch as green was a promotion, and the promotion was being refused by that
+  # same gate's stale red. A scheduled read breaks the loop, and it also catches the opposite case
+  # (somebody turning captcha OFF) within a day instead of at the next promotion — which is the
+  # case that actually costs customers.
+  #
+  # report mode is READ-ONLY: it prints booleans, names and value shapes, never a secret.
+  schedule:
+    # 06:05 UTC — clear of the fleet's other captcha jobs (ReplyFlow 05:40, LaunchReady 05:50,
+    # Distribution-OS 05:55, Arivioo 06:00).
+    - cron: '5 6 * * *'
+
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: report (read-only) | enable | disable (rollback)
+        required: true
+        default: report
+        type: choice
+        options: [report, enable, disable]
+
+# One writer at a time on the project's auth config: two of these racing would leave the switch in
+# a state neither run reported.
+concurrency:
+  group: auth-captcha-production
+  cancel-in-progress: false
+
+jobs:
+  switch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: ${{ inputs.mode || 'report' }} CAPTCHA on production
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          # The Cloudflare Turnstile SECRET key for the Beize Jass Tour sign-in widget (site key
+          # 0x4AAAAAAEz4uXEnV8i5NHlb). It cannot be read back out of the Supabase project:
+          # edge-function secrets are stored write-only and GET /v1/projects/{ref}/secrets returns a
+          # SHA-256 digest, not the value. This repository secret is the one usable source.
+          # `enable` asks Cloudflare to confirm it is genuine before touching Supabase, so a
+          # wrong-but-plausible value cannot become a silent, total customer lockout.
+          TURNSTILE_SECRET: ${{ secrets.TURNSTILE_SECRET }}
+        run: node scripts/auth-captcha.mjs ${{ inputs.mode || 'report' }} --project production
+
+      # A FLIP THAT IS NOT PROBED IS A CLAIM. This POSTs a tokenless /otp at the live project and
+      # asserts it is refused FOR CAPTCHA REASONS — the only witness that the hole is actually shut.
+      - name: Prove it against the live project
+        # Also on the schedule: a daily read that never probes would report the SETTING and not the
+        # BEHAVIOUR, and it is the behaviour that went stale for twelve hours on ReplyFlow.
+        if: inputs.mode == 'enable' || github.event_name == 'schedule'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: node scripts/signin-captcha.prod.test.mjs
