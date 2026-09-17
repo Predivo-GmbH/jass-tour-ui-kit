@@ -41,6 +41,17 @@ jobs:
 
       - run: npm ci
 
+      # Nothing new ships untested (placed by hand 2026-09-17 — this repo has no coverage-gate
+
+      # step to anchor to). BLOCKING; never continue-on-error.
+
+      # What counts as a functionality: docs/WHAT-COUNTS-AS-A-FUNCTIONALITY.md
+
+      - name: Nothing new shipped without its test (BLOCKING)
+
+        run: node scripts/check-new-functionality-registered.mjs
+
+
       - name: Lint
         run: npm run lint
 
