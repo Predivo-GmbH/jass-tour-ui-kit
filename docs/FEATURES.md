@@ -12,4 +12,4 @@ Source: src/lib/utils.ts, src/components/ui/card.tsx, src/components/ui/select.t
 
 Status: verified on the repair branch; not a new release policy.
 
-Source and test: test/no-high-dependency-advisories-in-full-tree.mjs. Command: npm run test:dependency-audit. The final audit has zero high or critical advisories and four moderate development-tool advisories. The check is an explicit maintenance command, not a replacement for runtime release gates.
+Source and test: test/no-high-dependency-advisories-in-full-tree.mjs. Command: npm run test:dependency-audit. The final audit has zero high or critical advisories and four moderate advisories, including React Router and test tooling. The check is an explicit maintenance command, not a replacement for runtime release gates.
