@@ -31,6 +31,30 @@ jobs:
 
       - run: npm ci
 
+      # DISCOVERED, NOT LISTED. Until 2026-10-06 no workflow here ran an offline scripts/*.test.mjs.
+      # The glob means a guard added tomorrow runs without anybody remembering to add a line.
+      # Absence is not success: an empty glob FAILS, otherwise a moved directory switches the whole
+      # thing off while still printing green. *.prod.test.mjs and *.live.test.mjs are CARVED OUT
+      # (named, never silent): signin-captcha.prod.test.mjs probes the live project and has its own
+      # workflow (auth-captcha.yml); a pull-request check must not reach production.
+      - name: Guard suites (discovered, not listed)
+        run: |
+          set -e
+          shopt -s nullglob
+          suites=()
+          for f in scripts/*.test.mjs; do
+            case "$f" in
+              *.prod.test.mjs|*.live.test.mjs) echo "NOT run here (probes production): $f" ;;
+              *) suites+=("$f") ;;
+            esac
+          done
+          if [ ${#suites[@]} -eq 0 ]; then
+            echo "::error::no offline scripts/*.test.mjs found - the guard suites are not running"
+            exit 1
+          fi
+          echo "running ${#suites[@]} guard suite(s): ${suites[*]}"
+          node --test "${suites[@]}"
+
       - name: Cache Playwright browsers
         id: playwright-cache
         uses: actions/cache@v5

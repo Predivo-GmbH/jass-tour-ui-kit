@@ -352,6 +352,11 @@ jobs:
             echo "Asset prune: $ASSETS_DIR is empty - nothing to do."
             exit 0
           fi
+          # Without the build on disk nothing below could be protected, so delete nothing at all.
+          if [ ! -d ./dist/assets ] || [ -z "$(ls -A ./dist/assets)" ]; then
+            echo "::error::Asset prune: ./dist/assets is missing or empty, so the files the live site needs cannot be told apart from stale ones - deleting nothing."
+            exit 0
+          fi
 
           # Probe every file's mtime in ONE lftp session: echo a PROBE: name line before
           # each quote MDTM so reply lines stay paired with their file even when a file
@@ -370,11 +375,29 @@ jobs:
               # Hashed asset names only ([A-Za-z0-9._/-], no spaces/globs) — anything
               # else is skipped, never deleted.
               [[ "$rel" =~ ^[A-Za-z0-9._/-]+$ ]] || continue
+              # NEVER delete a file the build just uploaded contains, however old its server
+              # timestamp. An upload that skips unchanged files (`mirror --ignore-time`, the
+              # "optimisation" four fleet repos made on 2026-09-16) leaves an unchanged file with
+              # its OLD timestamp; on 2026-10-02 this exact step deleted SignalScore's live
+              # stylesheet that way (signalscore.ch unstyled for three days).
+              # See scripts/verify-live-assets.mjs.
+              [ -e "./dist/assets/$rel" ] && continue
               echo "echo \"PROBE:$ASSETS_DIR/$rel\""
               echo "quote MDTM $ASSETS_DIR/$rel"
             done
             echo "quit"
           } > "$PROBE_SCRIPT"
+          # Every remote file belongs to the build just uploaded (the keep-check above skipped
+          # them all), so there is nothing to probe - and therefore no MDTM replies. That is the
+          # normal state when no asset changed in 14 days, not an MDTM failure; without this the
+          # step below raised a false "server may not support MDTM" ::error:: (ChannelMover staging
+          # run 37393126122 and BoatBuddy staging run 37394918691, the first deploys after the
+          # keep-check landed).
+          if ! grep -q "^quote MDTM " "$PROBE_SCRIPT"; then
+            rm -f "$PROBE_SCRIPT"
+            echo "Asset prune: every file in $ASSETS_DIR belongs to the build just uploaded - nothing to prune."
+            exit 0
+          fi
 
           OUT=$(timeout 420 lftp -f "$PROBE_SCRIPT" 2>&1)
           rm -f "$PROBE_SCRIPT"
@@ -410,3 +433,11 @@ jobs:
           echo "$DEL_OUT"
           echo "Asset prune: deleted $COUNT file(s) older than $DAYS days from $ASSETS_DIR."
           exit 0
+
+      # "HTTP 200 on the home page" is not "the site works". On 2026-10-02 SignalScore's HTML
+      # answered 200 while the stylesheet it links answered 404, its deploy check passed, and the
+      # site ran unstyled for three days. This job had no post-deploy check at all. This opens the
+      # real pages, loads EVERY file they reference, and checks the home page links the build just
+      # uploaded. AFTER the prune, so it sees what the prune left.
+      - name: Verify production serves every file its pages need
+        run: node scripts/verify-live-assets.mjs --base https://beize-jass-tour.mueller.ro --pages /,/auth,/dashboard,/rangliste,/statuten --dist dist
