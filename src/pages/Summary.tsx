@@ -282,7 +282,7 @@ export default function Summary() {
 
       {/* Lucky Wheel Tiebreaker */}
       {showTiebreaker && tieGroups.length > 0 && (
-        <Card className="border-2 border-primary/50 bg-gradient-to-br from-primary/5 to-primary/10">
+        <Card className="border-2 border-primary/50 bg-linear-to-br from-primary/5 to-primary/10">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-lg">
               <Trophy className="h-5 w-5 text-primary" aria-hidden="true" />

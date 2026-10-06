@@ -42,6 +42,12 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
 
+      - name: Verify production stylesheet compatibility
+        run: npm run test:styles
+        env:
+          VITE_SUPABASE_URL: https://example.invalid
+          VITE_SUPABASE_PUBLISHABLE_KEY: local-preview-placeholder
+
       # Public-safe Supabase client config (see deploy.yml) — the Playwright
       # webServer runs `npm run dev`, which needs these since .env was untracked
       # in e877113. Vite exposes process.env vars prefixed with VITE_.

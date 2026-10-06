@@ -199,7 +199,7 @@ export default function SessionLobby() {
         </div>
 
         {/* Join Code */}
-        <Card className="bg-gradient-to-r from-primary/5 to-primary/10">
+        <Card className="bg-linear-to-r from-primary/5 to-primary/10">
           <CardContent className="p-4 text-center sm:p-8">
             <p className="text-sm text-muted-foreground mb-2">Session Code:</p>
             <div className="flex items-center justify-center gap-4">
