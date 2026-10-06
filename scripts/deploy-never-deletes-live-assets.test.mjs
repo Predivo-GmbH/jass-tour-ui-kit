@@ -142,8 +142,12 @@ test('every prune step protects the files of the build just uploaded', () => {
   for (const p of prunes) {
     assert.match(p.body, /\[ -e "\.\/dist\/assets\/\$rel" \] && continue/, `"${p.name}" can delete a file the current build contains`)
     assert.match(p.body, /if \[ ! -d \.\/dist\/assets \]/, `"${p.name}" would prune blind when ./dist/assets is missing`)
-    // With nothing left to probe, an empty MDTM run must not read as "the server does not support MDTM".
-    assert.match(p.body, /if ! grep -q '\^quote MDTM ' "\$PROBE_SCRIPT"; then/, `"${p.name}" raises a false MDTM alarm when every file belongs to the build just uploaded`)
+    // When the keep-check skips every remote file there is nothing to probe, hence no MDTM
+    // replies - which must read as "nothing to prune", not as the MDTM-unsupported ::error::
+    // (ChannelMover staging run 37393126122 and BoatBuddy 37394918691 raised exactly that false alarm).
+    const nothingLeft = p.body.search(/if ! grep -q "\^quote MDTM " "\$PROBE_SCRIPT"; then/)
+    assert.ok(nothingLeft > -1, `"${p.name}" reports "no MDTM replies" when every file simply belongs to the current build`)
+    assert.ok(nothingLeft < p.body.indexOf('no MDTM replies from'), `"${p.name}" must exit on "nothing left to probe" BEFORE the MDTM-replies check`)
   }
 })
 

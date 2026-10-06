@@ -387,12 +387,15 @@ jobs:
             done
             echo "quit"
           } > "$PROBE_SCRIPT"
-          # The keep-line above skips every file the build just uploaded. When nothing else is left
-          # there is nothing to probe - say so, instead of letting the empty probe below raise the
-          # misleading "no MDTM replies (server may not support MDTM)" alarm.
-          if ! grep -q '^quote MDTM ' "$PROBE_SCRIPT"; then
+          # Every remote file belongs to the build just uploaded (the keep-check above skipped
+          # them all), so there is nothing to probe - and therefore no MDTM replies. That is the
+          # normal state when no asset changed in 14 days, not an MDTM failure; without this the
+          # step below raised a false "server may not support MDTM" ::error:: (ChannelMover staging
+          # run 37393126122 and BoatBuddy staging run 37394918691, the first deploys after the
+          # keep-check landed).
+          if ! grep -q "^quote MDTM " "$PROBE_SCRIPT"; then
             rm -f "$PROBE_SCRIPT"
-            echo "Asset prune: every file in $ASSETS_DIR belongs to the build just uploaded - nothing to delete."
+            echo "Asset prune: every file in $ASSETS_DIR belongs to the build just uploaded - nothing to prune."
             exit 0
           fi
 
