@@ -234,7 +234,7 @@ export function LuckyWheel({ tieGroups, onComplete, allPlayers }: LuckyWheelProp
         <div className="relative">
           {/* Pointer */}
           <div className="absolute -top-1 left-1/2 -translate-x-1/2 z-10">
-            <div className="w-0 h-0 border-l-[14px] border-r-[14px] border-t-[24px] border-l-transparent border-r-transparent border-t-primary drop-shadow-lg" />
+            <div className="w-0 h-0 border-l-14 border-r-14 border-t-24 border-l-transparent border-r-transparent border-t-primary drop-shadow-lg" />
           </div>
 
           {/* SVG Wheel */}
@@ -347,7 +347,7 @@ export function LuckyWheel({ tieGroups, onComplete, allPlayers }: LuckyWheelProp
 
       {/* Remaining info */}
       {remainingInGroup.length > 1 && !showResult && !isSpinning && (
-        <p className="text-xs text-muted-foreground text-center break-words max-w-full">
+        <p className="text-xs text-muted-foreground text-center wrap-break-word max-w-full">
           Noch zu vergeben: {remainingInGroup.map(p => p.name).join(' vs ')}
         </p>
       )}

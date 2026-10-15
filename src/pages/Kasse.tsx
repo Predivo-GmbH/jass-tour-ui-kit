@@ -79,7 +79,7 @@ export default function Kasse() {
       </div>
 
       {/* Balance */}
-      <Card className="bg-gradient-to-r from-primary/5 to-primary/10">
+      <Card className="bg-linear-to-r from-primary/5 to-primary/10">
         <CardContent className="p-4 text-center sm:p-6">
           <Wallet className="h-8 w-8 text-primary mx-auto mb-2" aria-hidden="true" />
           <p className="text-sm text-muted-foreground">Aktueller Saldo</p>

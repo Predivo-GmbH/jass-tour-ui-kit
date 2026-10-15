@@ -63,7 +63,7 @@ export default function Dashboard() {
 
       {/* Incomplete Session Banner */}
       {incompleteSession && (
-        <Card className="border-2 border-primary/50 bg-gradient-to-r from-primary/5 to-primary/10">
+        <Card className="border-2 border-primary/50 bg-linear-to-r from-primary/5 to-primary/10">
           <CardContent className="p-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex-1">

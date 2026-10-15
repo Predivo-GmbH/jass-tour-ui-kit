@@ -1,7 +1,7 @@
 # Jass Tour UI Kit
 
 ## Stack
-- React 18 + TypeScript + Vite 5 (port 8080), Tailwind + shadcn/ui, TanStack Query
+- React 18 + TypeScript + Vite 7 (port 8080), Tailwind 4 + shadcn/ui, TanStack Query
 - Supabase backend
 - PWA enabled (vite-plugin-pwa)
 - Vitest + Testing Library for tests

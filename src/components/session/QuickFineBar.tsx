@@ -24,7 +24,7 @@ export function QuickFineBar({ players, onAddFine }: QuickFineBarProps) {
   const [selectedPlayer, setSelectedPlayer] = useState(players[0]?.id || '');
 
   return (
-    <div className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom))] inset-x-0 z-40 border-t bg-card/95 backdrop-blur p-3 lg:bottom-0 lg:left-64">
+    <div className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom))] inset-x-0 z-40 border-t bg-card/95 backdrop-blur-sm p-3 lg:bottom-0 lg:left-64">
       <div className="mx-auto max-w-2xl lg:max-w-4xl">
         <div className="flex items-center gap-2 mb-2">
           <Zap className="h-4 w-4 text-primary" aria-hidden="true" />

@@ -398,7 +398,7 @@ export default function Rangliste() {
                     <div className="flex h-6 overflow-hidden rounded-md">
                       {player.rank1 > 0 && (
                         <div 
-                          className="bg-yellow-400 flex items-center justify-center text-xs font-medium text-yellow-900 min-w-[1.25rem]"
+                          className="bg-yellow-400 flex items-center justify-center text-xs font-medium text-yellow-900 min-w-5"
                           style={{ width: `${(player.rank1 / total) * 100}%` }}
                         >
                           {player.rank1}
@@ -406,7 +406,7 @@ export default function Rangliste() {
                       )}
                       {player.rank2 > 0 && (
                         <div 
-                          className="bg-gray-300 flex items-center justify-center text-xs font-medium text-gray-700 min-w-[1.25rem]"
+                          className="bg-gray-300 flex items-center justify-center text-xs font-medium text-gray-700 min-w-5"
                           style={{ width: `${(player.rank2 / total) * 100}%` }}
                         >
                           {player.rank2}
@@ -414,7 +414,7 @@ export default function Rangliste() {
                       )}
                       {player.rank3 > 0 && (
                         <div 
-                          className="bg-orange-300 flex items-center justify-center text-xs font-medium text-orange-800 min-w-[1.25rem]"
+                          className="bg-orange-300 flex items-center justify-center text-xs font-medium text-orange-800 min-w-5"
                           style={{ width: `${(player.rank3 / total) * 100}%` }}
                         >
                           {player.rank3}
@@ -422,7 +422,7 @@ export default function Rangliste() {
                       )}
                       {player.rank4 > 0 && (
                         <div 
-                          className="bg-red-200 flex items-center justify-center text-xs font-medium text-red-700 min-w-[1.25rem]"
+                          className="bg-red-200 flex items-center justify-center text-xs font-medium text-red-700 min-w-5"
                           style={{ width: `${(player.rank4 / total) * 100}%` }}
                         >
                           {player.rank4}
