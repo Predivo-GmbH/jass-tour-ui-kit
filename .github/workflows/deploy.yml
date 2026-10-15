@@ -160,6 +160,7 @@ jobs:
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USERNAME }}
           FTP_PASS: ${{ secrets.FTP_PASSWORD }}
+          LFTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: |
           set +e
           # --insecure mirrors `set ssl:verify-certificate no`, which every lftp call in
@@ -172,7 +173,8 @@ jobs:
           # 15 simultaneous fleet deploys made this step time out at 30s (curl 28).
           n=0
           while :; do
-            OUT=$(curl -sS --ssl-reqd --insecure --connect-timeout 20 --max-time 90 --user "$FTP_USER:$FTP_PASS" "ftp://$FTP_HOST/" 2>&1)
+            FTP_CURL_AUTH="user = \"$FTP_USER:$(printf '%s' "$FTP_PASS" | sed 's/[\\"]/\\&/g')\""
+            OUT=$(printf '%s\n' "$FTP_CURL_AUTH" | curl -sS --ssl-reqd --insecure --connect-timeout 20 --max-time 90 -K - "ftp://$FTP_HOST/" 2>&1)
             RC=$?
             if [ "$RC" -eq 0 ] || [ "$RC" -eq 67 ]; then break; fi
             n=$((n+1))
@@ -251,7 +253,7 @@ jobs:
 
       - name: Verify deploy target (site-id guard)
         run: |
-          REMOTE_ID=$(lftp -u "$FTP_USER,$FTP_PASS" "ftp://$FTP_HOST" -e "set net:timeout 30; set net:max-retries 2; set ftp:ssl-force yes; set ssl:verify-certificate no; set ftp:ssl-protect-data no; cat /Beize-Jass-Tour.mueller.ro/.site-id; quit" 2>/dev/null || echo "")
+          REMOTE_ID=$(lftp --env-password -u "$FTP_USER" "ftp://$FTP_HOST" -e "set net:timeout 30; set net:max-retries 2; set ftp:ssl-force yes; set ssl:verify-certificate no; set ftp:ssl-protect-data no; cat /Beize-Jass-Tour.mueller.ro/.site-id; quit" 2>/dev/null || echo "")
           # An EMPTY id is not a match failure, so `-n` below let it through - which is exactly
           # what a 530, a timeout or a dropped connection produces. The guard cannot tell those
           # apart from "file absent", so it must not deploy blind. Every live target has a seeded
@@ -270,6 +272,7 @@ jobs:
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USERNAME }}
           FTP_PASS: ${{ secrets.FTP_PASSWORD }}
+          LFTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
 
       - name: Deploy via FTP
         run: |
@@ -278,7 +281,7 @@ jobs:
           set +e
           n=0
           until [ $n -ge 4 ]; do
-          OUT=$(lftp -u "$FTP_USER,$FTP_PASS" "ftp://$FTP_HOST" <<SCRIPT 2>&1
+          OUT=$(lftp --env-password -u "$FTP_USER" "ftp://$FTP_HOST" <<SCRIPT 2>&1
           set ftp:ssl-force yes; set ssl:verify-certificate no; set ftp:ssl-protect-data no
           set ftp:passive-mode yes; set ftp:prefer-epsv no; set net:timeout 30; set net:max-retries 4; set net:persist-retries 4; set net:reconnect-interval-base 8; set mirror:parallel-transfer-count 4
           mirror --reverse --verbose --no-perms \
@@ -303,6 +306,7 @@ jobs:
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USERNAME }}
           FTP_PASS: ${{ secrets.FTP_PASSWORD }}
+          LFTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
 
       - name: Prune stale assets (14-day retention)
         # Age-based cleanup of the hashed chunks the deploy leaves behind. This
@@ -324,6 +328,7 @@ jobs:
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USERNAME }}
           FTP_PASS: ${{ secrets.FTP_PASSWORD }}
+          LFTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
           ASSETS_DIR: /Beize-Jass-Tour.mueller.ro/assets
         run: |
           # GitHub wraps every run block in bash -e: a failing command substitution in an
@@ -338,7 +343,7 @@ jobs:
           set ssl:verify-certificate no; set ftp:ssl-protect-data no
           set ftp:passive-mode yes; set net:timeout 60"
 
-          LIST=$(timeout 180 lftp -u "$FTP_USER,$FTP_PASS" "ftp://$FTP_HOST" <<SCRIPT 2>&1
+          LIST=$(timeout 180 lftp --env-password -u "$FTP_USER" "ftp://$FTP_HOST" <<SCRIPT 2>&1
           $SETTINGS
           find $ASSETS_DIR
           quit
@@ -352,13 +357,18 @@ jobs:
             echo "Asset prune: $ASSETS_DIR is empty - nothing to do."
             exit 0
           fi
+          # Without the build on disk nothing below could be protected, so delete nothing at all.
+          if [ ! -d ./dist/assets ] || [ -z "$(ls -A ./dist/assets)" ]; then
+            echo "::error::Asset prune: ./dist/assets is missing or empty, so the files the live site needs cannot be told apart from stale ones - deleting nothing."
+            exit 0
+          fi
 
           # Probe every file's mtime in ONE lftp session: echo a PROBE: name line before
           # each quote MDTM so reply lines stay paired with their file even when a file
           # vanishes (550) between listing and probing.
           PROBE_SCRIPT=$(mktemp)
           {
-            echo "open -u $FTP_USER,$FTP_PASS ftp://$FTP_HOST"
+            echo "open --env-password -u $FTP_USER ftp://$FTP_HOST"
             echo "$SETTINGS"
             # find prints full remote paths ("$ASSETS_DIR/<nested>/file", recursively —
             # nested chunk dirs are covered too); normalize to a path relative to
@@ -370,11 +380,29 @@ jobs:
               # Hashed asset names only ([A-Za-z0-9._/-], no spaces/globs) — anything
               # else is skipped, never deleted.
               [[ "$rel" =~ ^[A-Za-z0-9._/-]+$ ]] || continue
+              # NEVER delete a file the build just uploaded contains, however old its server
+              # timestamp. An upload that skips unchanged files (`mirror --ignore-time`, the
+              # "optimisation" four fleet repos made on 2026-09-16) leaves an unchanged file with
+              # its OLD timestamp; on 2026-10-02 this exact step deleted SignalScore's live
+              # stylesheet that way (signalscore.ch unstyled for three days).
+              # See scripts/verify-live-assets.mjs.
+              [ -e "./dist/assets/$rel" ] && continue
               echo "echo \"PROBE:$ASSETS_DIR/$rel\""
               echo "quote MDTM $ASSETS_DIR/$rel"
             done
             echo "quit"
           } > "$PROBE_SCRIPT"
+          # Every remote file belongs to the build just uploaded (the keep-check above skipped
+          # them all), so there is nothing to probe - and therefore no MDTM replies. That is the
+          # normal state when no asset changed in 14 days, not an MDTM failure; without this the
+          # step below raised a false "server may not support MDTM" ::error:: (ChannelMover staging
+          # run 37393126122 and BoatBuddy staging run 37394918691, the first deploys after the
+          # keep-check landed).
+          if ! grep -q "^quote MDTM " "$PROBE_SCRIPT"; then
+            rm -f "$PROBE_SCRIPT"
+            echo "Asset prune: every file in $ASSETS_DIR belongs to the build just uploaded - nothing to prune."
+            exit 0
+          fi
 
           OUT=$(timeout 420 lftp -f "$PROBE_SCRIPT" 2>&1)
           rm -f "$PROBE_SCRIPT"
@@ -398,7 +426,7 @@ jobs:
 
           DEL_SCRIPT=$(mktemp)
           {
-            echo "open -u $FTP_USER,$FTP_PASS ftp://$FTP_HOST"
+            echo "open --env-password -u $FTP_USER ftp://$FTP_HOST"
             echo "$SETTINGS"
             # lftp rm does NOT glob-expand - hashed names are passed verbatim.
             # $OLD already holds full remote paths (the PROBE: values).
@@ -410,3 +438,11 @@ jobs:
           echo "$DEL_OUT"
           echo "Asset prune: deleted $COUNT file(s) older than $DAYS days from $ASSETS_DIR."
           exit 0
+
+      # "HTTP 200 on the home page" is not "the site works". On 2026-10-02 SignalScore's HTML
+      # answered 200 while the stylesheet it links answered 404, its deploy check passed, and the
+      # site ran unstyled for three days. This job had no post-deploy check at all. This opens the
+      # real pages, loads EVERY file they reference, and checks the home page links the build just
+      # uploaded. AFTER the prune, so it sees what the prune left.
+      - name: Verify production serves every file its pages need
+        run: node scripts/verify-live-assets.mjs --base https://beize-jass-tour.mueller.ro --pages /,/auth,/dashboard,/rangliste,/statuten --dist dist
