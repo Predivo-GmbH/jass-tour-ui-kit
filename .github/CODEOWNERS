@@ -1,0 +1,3 @@
+# SR-SUP-12: workflow changes have a named owner; release provenance is enforced in deploy.yml.
+/.github/workflows/ @Predivo-GmbH
+/scripts/check-main-pr.mjs @Predivo-GmbH

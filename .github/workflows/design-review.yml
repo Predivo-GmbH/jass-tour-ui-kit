@@ -19,6 +19,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   design-review:
     # Auto-generated content changes (the SEO blog refresh, batched rewrites, dependency
@@ -32,6 +35,7 @@ jobs:
       && !startsWith(github.head_ref, 'seo/')
       && github.event.pull_request.user.login != 'dependabot[bot]'
       && github.event.pull_request.user.login != 'renovate[bot]'
+    # Public repository: GitHub-hosted runners only (SR-SUP-08; reviewed 2026-11-04).
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # A reviewer that cannot run must NOT report success. Until 2026-08-28 a missing key
@@ -41,6 +45,7 @@ jobs:
     # and says why.
     env:
       HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    # Review jobs need write access only to publish their PR findings.
     permissions:
       contents: read
       pull-requests: write
@@ -51,7 +56,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
 
@@ -68,7 +73,7 @@ jobs:
 
       - name: Run Design Review
         if: env.HAS_KEY == 'true'
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c # v1
         with:
           # claude-code-action@v1 accepts `prompt` and `claude_args`. The old `model`,
           # `direct_prompt` and `allowed_tools` inputs are rejected ("Unexpected input(s)")

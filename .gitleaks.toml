@@ -1,0 +1,19 @@
+# gitleaks config for jass-tour (deploy-standard §4d). Extends the default rule set; the allowlist
+# carries only values that are public BY DESIGN, each with its reason. A real secret never goes here.
+title = "jass-tour gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public-by-design values and secret REFERENCES, never secret values"
+regexes = [
+  # Supabase publishable keys ship in every visitor's browser (RLS protects the data).
+  '''sb_publishable_[A-Za-z0-9_-]{20,}''',
+  # GitHub Actions secret references are names, not values.
+  '''\$\{\{\s*secrets\.[A-Z0-9_]+\s*\}\}''',
+]
+paths = [
+  # Lock file: integrity hashes look like keys to the entropy rules.
+  '''package-lock\.json''',
+]

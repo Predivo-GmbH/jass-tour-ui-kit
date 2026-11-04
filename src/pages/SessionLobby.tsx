@@ -60,8 +60,8 @@ export default function SessionLobby() {
 
       // Listen for join events
       ch.on('presence', { event: 'sync' }, () => {
-        const state = ch.presenceState();
-        const names = Object.values(state).flat().map((p: { player?: string }) => p.player || 'Unknown');
+        const state = ch.presenceState<{ player?: string }>();
+        const names = Object.values(state).flat().map(p => p.player || 'Unknown');
         setParticipants(names.filter(n => n !== 'host'));
       });
 

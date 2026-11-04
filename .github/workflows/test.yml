@@ -17,19 +17,29 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   critical-path:
+    # Public repository: GitHub-hosted runners only (SR-SUP-08; reviewed 2026-11-04).
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
 
       - run: npm ci
+
+      - name: Lint, typecheck and unit tests
+        run: |
+          npm run lint
+          npm run typecheck
+          npm test -- --run --maxWorkers=2
 
       # DISCOVERED, NOT LISTED. Until 2026-10-06 no workflow here ran an offline scripts/*.test.mjs.
       # The glob means a guard added tomorrow runs without anybody remembering to add a line.
@@ -42,7 +52,7 @@ jobs:
           set -e
           shopt -s nullglob
           suites=()
-          for f in scripts/*.test.mjs; do
+          for f in scripts/*.test.mjs scripts/lib/*.test.mjs; do
             case "$f" in
               *.prod.test.mjs|*.live.test.mjs) echo "NOT run here (probes production): $f" ;;
               *) suites+=("$f") ;;
@@ -53,11 +63,11 @@ jobs:
             exit 1
           fi
           echo "running ${#suites[@]} guard suite(s): ${suites[*]}"
-          node --test "${suites[@]}"
+          node --test --test-concurrency=2 "${suites[@]}"
 
       - name: Cache Playwright browsers
         id: playwright-cache
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -72,11 +82,17 @@ jobs:
           VITE_SUPABASE_URL: https://example.invalid
           VITE_SUPABASE_PUBLISHABLE_KEY: local-preview-placeholder
 
-      # Public-safe Supabase client config (see deploy.yml) — the Playwright
-      # webServer runs `npm run dev`, which needs these since .env was untracked
-      # in e877113. Vite exposes process.env vars prefixed with VITE_.
-      - name: Run critical path tests
-        run: npx playwright test e2e/critical-path.spec.ts
+      - name: Check the built public files and Apache config offline
+        env:
+          SECURITY_BUILT_HTACCESS: dist/.htaccess
+        run: |
+          node scripts/check-dist-private-files.mjs dist
+          node --test --test-concurrency=2 scripts/lib/security-htaccess.test.mjs
+
+      # Three backend health probes are retained as @live tests for authorised manual
+      # runs. PR checks exercise this checkout offline and must not contact production.
+      - name: Run local critical path tests
+        run: npx playwright test e2e/critical-path.spec.ts --grep-invert '@live' --workers=2
         env:
           # SAY WHAT WE BUILT. This spec used to default to https://Beize-Jass-Tour.mueller.ro and
           # nothing in this repository ever set BASE_URL, so the gate tested the live site instead
@@ -84,13 +100,43 @@ jobs:
           # address and the build cannot drift apart. 5173 is the port playwright.config.ts starts
           # its webServer on when E2E_PORT is not supplied.
           BASE_URL: http://localhost:5173
-          VITE_SUPABASE_URL: https://uyksotlmrlxhmyeopktl.supabase.co
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
-          VITE_SUPABASE_PROJECT_ID: uyksotlmrlxhmyeopktl
+          OFFLINE_E2E: '1'
+          VITE_SUPABASE_URL: http://127.0.0.1:9
+          VITE_SUPABASE_PUBLISHABLE_KEY: local-preview-placeholder
 
       - name: Upload test results
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: critical-path-results
           path: playwright-report/
+
+  sast:
+    # Public repository: GitHub-hosted runners only (SR-SUP-08; reviewed 2026-11-04).
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: SAST scan (blocking, deploy-standard §4d)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/semgrep-venv"
+          "$RUNNER_TEMP/semgrep-venv/bin/pip" install --quiet semgrep
+          "$RUNNER_TEMP/semgrep-venv/bin/semgrep" scan --config=p/security-audit --config=p/secrets --severity=ERROR --error --metrics=off .
+
+  workflow-report:
+    # Public repository: GitHub-hosted runners only (SR-SUP-08; reviewed 2026-11-04).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Zizmor workflow report (advisory)
+        continue-on-error: true
+        uses: zizmorcore/zizmor-action@e639db99335bc9038abc0e066dfcd72e23d26fb4 # v0.3.0
+        with:
+          version: v1.32.0
+          advanced-security: false
+          online-audits: false

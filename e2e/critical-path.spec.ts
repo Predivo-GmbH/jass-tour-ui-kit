@@ -37,6 +37,24 @@ const CONFIG = {
   ],
 }
 
+// PR checks are local-only. Live backend health coverage remains named @live below,
+// for an explicitly authorised manual run; it must not run as a side effect of a PR.
+if (process.env.OFFLINE_E2E === '1') {
+  for (const value of [BASE_URL, CONFIG.supabaseUrl]) {
+    if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(value).hostname)) {
+      throw new Error('Offline E2E requires loopback application and backend URLs')
+    }
+  }
+}
+
+test.beforeEach(async ({ context }) => {
+  if (process.env.OFFLINE_E2E !== '1') return
+  await context.route('**/*', route => {
+    const host = new URL(route.request().url()).hostname
+    return ['localhost', '127.0.0.1', '[::1]'].includes(host) ? route.continue() : route.abort()
+  })
+})
+
 // -- Auth Page ---------------------------------------------------------------
 
 test.describe('CRITICAL PATH — Auth Page', () => {
@@ -62,7 +80,7 @@ test.describe('CRITICAL PATH — Auth Page', () => {
 
 // -- Edge Function Health ----------------------------------------------------
 
-test.describe('CRITICAL PATH — Edge Functions', () => {
+test.describe('CRITICAL PATH — Edge Functions @live', () => {
   for (const funcName of CONFIG.edgeFunctions) {
     test(`"${funcName}" is reachable (not 500)`, async ({ request }) => {
       const response = await request.post(
@@ -112,7 +130,7 @@ test.describe('CRITICAL PATH — Route Guards', () => {
 // -- Infrastructure ----------------------------------------------------------
 
 test.describe('CRITICAL PATH — Infrastructure', () => {
-  test('Supabase auth service is healthy', async ({ request }) => {
+  test('Supabase auth service is healthy @live', async ({ request }) => {
     const response = await request.get(
       `${CONFIG.supabaseUrl}/auth/v1/health`,
       {
@@ -123,7 +141,7 @@ test.describe('CRITICAL PATH — Infrastructure', () => {
     expect(response.status()).toBe(200)
   })
 
-  test('Supabase REST API is reachable', async ({ request }) => {
+  test('Supabase REST API is reachable @live', async ({ request }) => {
     const response = await request.get(
       `${CONFIG.supabaseUrl}/rest/v1/`,
       {
@@ -134,7 +152,7 @@ test.describe('CRITICAL PATH — Infrastructure', () => {
     expect(response.status()).toBeLessThan(500)
   })
 
-  test('Production site is reachable', async ({ request }) => {
+  test('Selected application build is reachable', async ({ request }) => {
     const response = await request.get(BASE_URL, {
       failOnStatusCode: false,
     })

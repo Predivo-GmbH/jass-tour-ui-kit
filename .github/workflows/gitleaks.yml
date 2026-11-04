@@ -1,46 +1,68 @@
 name: Secret Scan (gitleaks)
 
-# Blocks secrets from entering the repo. On PRs it scans the PR commits; on
-# pushes it scans the pushed commits. Free for user-owned repos (no license).
-# Anon/publishable Supabase keys are public by design (RLS-protected) — if a
-# scan flags one, add it to .gitleaksignore with a comment, don't hide a real secret.
+# Blocks secrets from entering the repo. On PRs it scans the PR commits; on pushes to main it scans
+# the pushed commits; both then scan the files as they now stand. Anon/publishable Supabase keys are
+# safe to expose by design (RLS-protected) - if a scan flags one, add it to .gitleaksignore with a
+# comment rather than hiding a real secret.
+#
+# SR-SUP-09/10: use the fleet runner and CLI; both event commits and the working tree block.
 
 on:
+  # `pull_request` already covers every branch on its way to main, so `push` only needs to guard
+  # main itself. A branch push and its own pull request used to scan the same commits twice.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
-# pull-requests: read is REQUIRED. gitleaks-action lists the PR's commits through the
-# API, and without it every pull_request run dies with
-# "RequestError [HttpError]: Resource not accessible by integration, status: 403"
-# BEFORE scanning anything - a red check that never looked at a single file.
+# Read-only job, nowhere near the deploy, so cancelling a superseded scan is safe.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   gitleaks:
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # The fleet secret-scan gate requires read access to PR metadata.
+      pull-requests: read
+    # Public repository: GitHub-hosted runners only (SR-SUP-08; reviewed 2026-11-04).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          fetch-depth: 0
-      - name: gitleaks
-        uses: gitleaks/gitleaks-action@v3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # The action above scans the COMMIT RANGE of the event, and that is not enough.
-      # Proven 2026-08-20 on ReplyFlow: a merge commit introduced a service_role JWT and
-      # this workflow reported "No leaks detected". A working-tree scan sees the file as
-      # it now stands regardless of how it got there (same form deploy.yml uses).
-      # --config is passed ONLY when the repo actually has a .gitleaks.toml: gitleaks
-      # exits non-zero on a config path that does not exist, which would fail the step
-      # for the wrong reason and look exactly like a leak.
-      - name: gitleaks (working tree)
+          fetch-depth: 0 # full history so PR/commit range scanning works
+      - name: Install gitleaks 8.24.3
         run: |
-          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz -C /tmp gitleaks
-          chmod +x /tmp/gitleaks
-          CFG=""
-          if [ -f .gitleaks.toml ]; then CFG="--config .gitleaks.toml"; fi
-          /tmp/gitleaks dir . --no-banner --redact --exit-code 1 $CFG
+          # "$RUNNER_TEMP", not /tmp: /tmp is shared by every runner on the machine.
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/gitleaks.tar.gz" https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          chmod +x "$RUNNER_TEMP/gitleaks"
+      - name: gitleaks (this event's commits)
+        env:
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # FAIL CLOSED ON AN UNUSABLE RANGE. A first push has BEFORE=000...0, and an empty range would
+          # scan nothing and pass. Scan the last 50 commits instead.
+          if [ -n "${BASE_SHA:-}" ]; then
+            OPTS="$BASE_SHA..$HEAD_SHA"
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            OPTS="$BEFORE..$HEAD_SHA"
+          else
+            OPTS="-50"
+          fi
+          echo "scanning commits: $OPTS"
+          "$RUNNER_TEMP/gitleaks" git . --config .gitleaks.toml --redact --exit-code 1 --log-opts="$OPTS"
+      # The step above sees only this event's commits; a secret that arrives in a merge commit is
+      # invisible to it. Scan the files as they now stand too (the fleet's step, signalscore gitleaks.yml).
+      # `if: always()`: a failing range scan must not skip this one, or it hides what the tree holds.
+      - name: gitleaks (working tree)
+        if: always()
+        run: '"$RUNNER_TEMP/gitleaks" dir . --config .gitleaks.toml --redact --exit-code 1'
