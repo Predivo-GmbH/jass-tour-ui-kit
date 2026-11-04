@@ -1,0 +1,4 @@
+Contact: mailto:security@predivo.ch
+Expires: 2027-11-03T00:00:00Z
+Preferred-Languages: de, en
+Canonical: https://beize-jass-tour.mueller.ro/.well-known/security.txt

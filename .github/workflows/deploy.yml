@@ -3,16 +3,7 @@ name: Build and Deploy to Plesk
 on:
   push:
     branches: [main]
-    paths-ignore:
-      # '*.md' matches ROOT-LEVEL markdown only in GitHub Actions, so a docs-only change
-      # in any subfolder still triggered a full deploy. No markdown in this repo is a
-      # build input (checked for `import ... .md`, `?raw` and import.meta.glob), so it
-      # is safe to ignore markdown at any depth.
-      - '*.md'
-      - '**/*.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - '.gitignore'
+    # SR-SUP-12 must check EVERY push to main, including documentation-only pushes.
   workflow_dispatch:
     inputs:
       confirm:
@@ -26,15 +17,42 @@ concurrency:
   # production in a half-uploaded/half-deleted state (breakage investigation SS6).
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
+  main-pr:
+    # This also checks the exact SHA selected for a manual production promotion.
+    runs-on: ubuntu-latest # Public repository; reviewed 2026-11-04 (SR-SUP-08).
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Read the merged PR and its check results; this job cannot write to GitHub.
+      pull-requests: read
+      checks: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+      - name: Require a merged pull request with green checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: node scripts/check-main-pr.mjs
+
   validate:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # Public repository: GitHub-hosted runners only (SR-SUP-08; reviewed 2026-11-04).
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
@@ -54,7 +72,12 @@ jobs:
         run: npm run lint
 
       - name: Test
-        run: npm test -- --run
+        run: npm test -- --run --maxWorkers=2
+
+      - name: Typecheck and offline security guards
+        run: |
+          npm run typecheck
+          npm run test:security
 
       # Public-safe Supabase client config (publishable key + public project URL -
       # these ship in every client bundle by design; RLS protects data).
@@ -95,25 +118,27 @@ jobs:
   gate-security:
     if: github.event_name == 'workflow_dispatch'
     needs: validate
+    # Public repository: GitHub-hosted runners only (SR-SUP-08; reviewed 2026-11-04).
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
 
       - name: Install gitleaks
         run: |
-          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz -C /tmp gitleaks
-          chmod +x /tmp/gitleaks
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/gitleaks.tar.gz" https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          chmod +x "$RUNNER_TEMP/gitleaks"
 
       - name: 'Secret scan: working tree (BLOCKING - new committed-file leaks)'
-        run: /tmp/gitleaks dir . --no-banner --redact -v --exit-code 1
+        run: '"$RUNNER_TEMP/gitleaks" dir . --no-banner --redact --exit-code 1'
 
       - name: 'Secret scan: full history (AUDIT only, non-blocking - historical keys are public/deprecated)'
-        run: /tmp/gitleaks git . --no-banner --redact --log-opts=--all --exit-code 0 || true
+        run: '"$RUNNER_TEMP/gitleaks" git . --no-banner --redact --log-opts=--all --exit-code 0 || true'
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
 
@@ -138,15 +163,19 @@ jobs:
       # --error fails the gate on a real finding.
       - name: SAST scan (semgrep)
         run: |
-          python3 -m pip install --quiet --user --break-system-packages semgrep
-          export PATH="$HOME/.local/bin:$PATH"
-          semgrep scan --config=p/security-audit --config=p/secrets --severity=ERROR --error --metrics=off .
+          python3 -m venv "$RUNNER_TEMP/semgrep-venv"
+          "$RUNNER_TEMP/semgrep-venv/bin/pip" install --quiet semgrep
+          "$RUNNER_TEMP/semgrep-venv/bin/semgrep" scan --config=p/security-audit --config=p/secrets --severity=ERROR --error --metrics=off .
 
   deploy:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'deploy'
-    needs: [validate, gate-security]
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'deploy' && github.ref == 'refs/heads/main'
+    needs: [main-pr, validate, gate-security]
+    # Public repository: GitHub-hosted runners only (SR-SUP-08; reviewed 2026-11-04).
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # SR-HOST-06: production FTP settings stay unchanged until three staging deploys
+    # pass with tertia.sui-inter.net, certificate verification and PROT P (deploy-standard §5d).
+    # This repository currently has no staging deploy job; see docs/DECISIONS.md.
     steps:
       - name: Verify FTP credentials (fail fast on a stale secret)
         # A stale FTP secret used to surface late and confusingly. The site-id guard
@@ -194,9 +223,9 @@ jobs:
           fi
           echo "FTP auth OK - $(printf '%s\n' "$OUT" | grep -c '') entries at the account root."
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
@@ -216,7 +245,7 @@ jobs:
         run: npm run lint
 
       - name: Test
-        run: npm test -- --run
+        run: npm test -- --run --maxWorkers=2
 
       - name: Build
         run: npm run build
@@ -248,9 +277,19 @@ jobs:
       - name: Install lftp
         run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
 
-      - name: Write site-id marker
-        run: echo "jass-tour-ui-kit" > dist/.site-id
+      - name: Refuse private build files before upload
+        run: node scripts/check-dist-private-files.mjs dist
 
+      - name: Install gitleaks 8.24.3
+        run: |
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/gitleaks.tar.gz" https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          chmod +x "$RUNNER_TEMP/gitleaks"
+
+      - name: Refuse secrets in the public build
+        run: '"$RUNNER_TEMP/gitleaks" dir dist --redact --exit-code 1'
+
+      # The remote .site-id is pre-seeded and checked over FTP, never copied into dist.
       - name: Verify deploy target (site-id guard)
         run: |
           REMOTE_ID=$(lftp --env-password -u "$FTP_USER" "ftp://$FTP_HOST" -e "set net:timeout 30; set net:max-retries 2; set ftp:ssl-force yes; set ssl:verify-certificate no; set ftp:ssl-protect-data no; cat /Beize-Jass-Tour.mueller.ro/.site-id; quit" 2>/dev/null || echo "")
@@ -446,3 +485,6 @@ jobs:
       # uploaded. AFTER the prune, so it sees what the prune left.
       - name: Verify production serves every file its pages need
         run: node scripts/verify-live-assets.mjs --base https://beize-jass-tour.mueller.ro --pages /,/auth,/dashboard,/rangliste,/statuten --dist dist
+
+      - name: Verify browser headers on pages and linked assets
+        run: node scripts/check-live-headers.mjs --base https://beize-jass-tour.mueller.ro --pages /

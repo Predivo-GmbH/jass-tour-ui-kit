@@ -21,7 +21,7 @@ const TURNSTILE_HOST = 'challenges.cloudflare.com'
 
 function cspFromHtaccess(): string {
   const htaccess = readFileSync(path.resolve(__dirname, '../../public/.htaccess'), 'utf8')
-  const m = htaccess.match(/Header set Content-Security-Policy "([^"]+)"/)
+  const m = htaccess.match(/Header always set Content-Security-Policy "([^"]+)"/)
   if (!m) throw new Error('public/.htaccess sets no Content-Security-Policy header — this test no longer knows what it guards')
   return m[1]
 }

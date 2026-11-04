@@ -1,16 +1,26 @@
+Options -Indexes
+
+# Plesk must pass static files to Apache; nginx-generated responses need host-level headers.
 <IfModule mod_headers.c>
-  Header set X-Content-Type-Options "nosniff"
-  Header set X-Frame-Options "DENY"
-  Header set X-XSS-Protection "1; mode=block"
-  Header set Referrer-Policy "strict-origin-when-cross-origin"
-  Header set Permissions-Policy "camera=(), microphone=(), geolocation=()"
-  Header set Cross-Origin-Opener-Policy "same-origin"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Strict-Transport-Security "max-age=63072000; includeSubDomains"
+  Header always set Referrer-Policy "same-origin"
+  Header always set Permissions-Policy "camera=(), microphone=(), payment=(), geolocation=(), usb=()"
+  Header always set Cross-Origin-Opener-Policy "same-origin"
+  Header unset X-Powered-By
+  Header always unset X-Powered-By
   # The sign-in captcha (Cloudflare Turnstile) needs challenges.cloudflare.com in script-src,
   # frame-src and connect-src. Without them the browser silently drops the widget, no token is ever
   # produced, and with captcha enforced on the project nobody can log in or register — which is
   # what happened from 2026-09-15 08:01Z. src/test/csp-allows-turnstile.test.ts fails the build
   # if any of the three goes missing.
-  Header set Content-Security-Policy "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://challenges.cloudflare.com https://uyksotlmrlxhmyeopktl.supabase.co wss://uyksotlmrlxhmyeopktl.supabase.co https://*.supabase.co wss://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests"
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; script-src-attr 'none'; frame-src https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://challenges.cloudflare.com https://uyksotlmrlxhmyeopktl.supabase.co wss://uyksotlmrlxhmyeopktl.supabase.co; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; upgrade-insecure-requests"
+  # Supabase email-confirmation links may carry a session fragment on the landing page.
+  # /auth also receives sign-in links. THE_REQUEST survives the SPA rewrite to index.html.
+  <If "%{THE_REQUEST} =~ m#\s/+(?:auth/?)?(?:\?|\s)#">
+    Header always set Referrer-Policy "no-referrer"
+  </If>
 </IfModule>
 
 <IfModule mod_deflate.c>
@@ -20,18 +30,32 @@
 <IfModule mod_headers.c>
   # HTML: no cache (always revalidate)
   <FilesMatch "\.html$">
-    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header always set Cache-Control "no-cache, no-store, must-revalidate"
+    Header always set Cross-Origin-Resource-Policy "same-origin"
   </FilesMatch>
 
   # Hashed JS/CSS: immutable 1-year cache
   <FilesMatch "\.(js|css)$">
     Header set Cache-Control "public, max-age=31536000, immutable"
   </FilesMatch>
+  # PWA entry files keep stable names and must see the next release immediately.
+  <FilesMatch "^(?:sw\.js|registerSW\.js|manifest\.webmanifest)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+</IfModule>
+
+# SR-HOST-03: copied from project-starter ee73ba6, with all Credentials*/package*.json denied.
+<IfModule mod_authz_core.c>
+  <FilesMatch "(?i)(^\.|^Credentials|^package.*\.json$|\.(?:map|sql|bak|orig)$|\.bak-|~$)">
+    Require all denied
+  </FilesMatch>
 </IfModule>
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
+
+  RewriteRule (^|/)(\.(?!well-known(?:/|$))[^/]*|docs|node_modules|backup|tmp)(/|$) - [F,L,NC]
 
   # Strip trailing slashes (prevents 500 errors on /path/ variants)
   RewriteCond %{REQUEST_FILENAME} !-d

@@ -204,16 +204,19 @@ export type Database = {
           created_at: string
           id: string
           name: string
+          user_id: string | null
         }
         Insert: {
           created_at?: string
           id?: string
           name: string
+          user_id?: string | null
         }
         Update: {
           created_at?: string
           id?: string
           name?: string
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -296,6 +299,7 @@ export type Database = {
           date: string
           id: string
           is_completed: boolean
+          join_code: string | null
           location: string
           losli_player_id: string | null
           total_pot: number
@@ -307,6 +311,7 @@ export type Database = {
           date?: string
           id?: string
           is_completed?: boolean
+          join_code?: string | null
           location: string
           losli_player_id?: string | null
           total_pot?: number
@@ -318,6 +323,7 @@ export type Database = {
           date?: string
           id?: string
           is_completed?: boolean
+          join_code?: string | null
           location?: string
           losli_player_id?: string | null
           total_pot?: number
