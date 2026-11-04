@@ -1,73 +1,128 @@
 #!/usr/bin/env node
-// SR-SUP-12: Roger's free release gate; it detects bypasses but cannot prevent a push.
-import { execFileSync } from 'node:child_process'
+// SR-SUP-12: Roger's blocking release gate; direct pushes cannot authorize a release.
+// REST client adapted from BackOffice 56a98437: Node fetch needs no runner-installed gh CLI.
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const requiredChecks = ['critical-path', 'gitleaks', 'sast']
 
-export function assertGreenPullRequest(pr, { sha, head, branch }) {
-  if (pr.state !== 'MERGED' || pr.baseRefName !== branch || pr.mergeCommit?.oid !== sha || pr.headRefOid !== head) {
-    throw new Error('The selected commit must be the exact merge of this pull request into the default branch')
-  }
-  const mergedAt = Date.parse(pr.mergedAt)
-  if (!Number.isFinite(mergedAt)) throw new Error('Missing merge time')
-  const checks = pr.statusCheckRollup
-  if (!Array.isArray(checks) || !checks.length) throw new Error('Pull request has no check evidence')
-  const latest = new Map()
-  for (const check of checks) {
-    const name = check.name ?? check.context
-    if (!name) throw new Error('Unrecognised check evidence')
-    const key = `${check.workflowName ?? ''}:${name}`
-    const time = Date.parse(check.startedAt ?? check.createdAt)
-    if (!Number.isFinite(time)) throw new Error(`Missing check time: ${name}`)
-    if (!latest.has(key) || time >= latest.get(key).time) latest.set(key, { check, name, time })
-  }
-  const successful = new Set()
-  for (const { check, name } of latest.values()) {
-    const completed = Date.parse(check.completedAt ?? check.createdAt)
-    if (!Number.isFinite(completed) || completed > mergedAt) throw new Error(`Check was not complete before merge: ${name}`)
-    if (check.__typename === 'CheckRun') {
-      if (check.status !== 'COMPLETED' || !['SUCCESS', 'SKIPPED', 'NEUTRAL'].includes(check.conclusion)) {
-        throw new Error(`Pull request check is not green: ${name}`)
-      }
-      if (check.conclusion === 'SUCCESS') successful.add(name)
-    } else if (check.__typename === 'StatusContext' && check.state === 'SUCCESS') {
-      // Legacy statuses must be green too; they cannot impersonate the required Actions jobs.
-    } else throw new Error(`Pull request status is not green: ${name}`)
-  }
+export function mergedPullRequest(pulls, { repo, sha, branch = 'main' }) {
+  const pr = pulls.find(p => p.merged_at && p.state === 'closed'
+    && p.merge_commit_sha === sha && p.base?.ref === branch
+    && p.base?.repo?.full_name?.toLowerCase() === repo.toLowerCase())
+  if (!pr) throw new Error('Release refused: this exact commit is not a merged pull request to the default branch.')
+  return pr
+}
+
+export function assertGreenPullRequest(pr, detail) {
+  if (detail.headRefOid !== pr.head?.sha) throw new Error('Pull request head changed; checks do not prove this revision.')
+  const mergedAt = Date.parse(pr.merged_at)
+  if (!Number.isFinite(mergedAt)) throw new Error('Pull request has no valid merge time.')
+  const checks = detail.statusCheckRollup
+  if (!Array.isArray(checks) || checks.length === 0) throw new Error('Pull request has no checks.')
+  // All three Actions jobs must succeed on the exact PR head before the merge.
   for (const name of requiredChecks) {
-    if (!successful.has(name)) throw new Error(`Missing successful required check: ${name}`)
+    if (!checks.some(c => c.__typename === 'CheckRun' && c.name === name && c.status === 'COMPLETED' && c.conclusion === 'SUCCESS')) {
+      throw new Error(`Pull request lacks a successful ${name} check.`)
+    }
+  }
+  for (const check of checks) {
+    if (!(check.name ?? check.context)) throw new Error('Unrecognised check evidence.')
+    const green = check.__typename === 'StatusContext'
+      ? check.state === 'SUCCESS'
+      : check.__typename === 'CheckRun' && check.status === 'COMPLETED'
+        && ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion)
+    if (!green) throw new Error(`Pull request check is not green: ${check.name ?? check.context ?? 'unknown'}`)
+    // Do not let a later rerun turn a red-at-merge PR into permission to release.
+    if (!Number.isFinite(Date.parse(check.completedAt))) throw new Error('Pull request check has no completion time.')
+    if (Date.parse(check.completedAt) > mergedAt) {
+      throw new Error('Pull request checks finished after the merge; a new green PR is required.')
+    }
   }
 }
 
-export function checkMainPr({ repo, sha, ref, branch, run = execFileSync }) {
-  if (!/^[a-z\d][\w.-]*\/[a-z\d][\w.-]*$/i.test(repo ?? '') || !/^[a-f\d]{40}$/i.test(sha ?? '')
-    || !branch || ref !== `refs/heads/${branch}`) {
-    throw new Error('Release provenance requires a full commit SHA on the default branch')
+const nextLink = header => /<([^>]+)>;\s*rel="next"/.exec(header ?? '')?.[1] ?? null
+
+// Read only REST evidence for the immutable PR head, never the new merge commit's running jobs.
+// Every non-2xx or malformed/incomplete response refuses the release.
+export function githubClient({ token = process.env.GITHUB_TOKEN,
+  apiUrl = process.env.GITHUB_API_URL || 'https://api.github.com',
+  fetchImpl = globalThis.fetch } = {}) {
+  if (!token) throw new Error('GITHUB_TOKEN is not set; the pull request behind this commit cannot be read.')
+  const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'jass-tour-check-main-pr' }
+  const pages = async (endpoint, readPage) => {
+    const first = new URL(`${apiUrl.replace(/\/$/, '')}${endpoint}`)
+    const items = []
+    let url = first.href
+    let total
+    const seen = new Set()
+    while (url) {
+      const next = new URL(url)
+      if (next.origin !== first.origin || next.pathname !== first.pathname || next.username || next.password) {
+        throw new Error('GitHub API returned an unsafe pagination link.')
+      }
+      if (seen.has(url) || seen.size >= 50) throw new Error('Too many or repeated pages of GitHub evidence.')
+      seen.add(url)
+      const response = await fetchImpl(url, { method: 'GET', headers, redirect: 'error', signal: AbortSignal.timeout(30000) })
+      if (!response.ok) throw new Error(`GitHub API answered ${response.status} for ${next.pathname}.`)
+      const body = await response.json()
+      const batch = readPage(body)
+      if (!Array.isArray(batch)) throw new Error('GitHub API returned no evidence list.')
+      if (!Array.isArray(body)) {
+        if (!Number.isSafeInteger(body.total_count) || body.total_count < 0
+          || (total !== undefined && total !== body.total_count)) throw new Error('GitHub evidence count changed or is missing.')
+        total = body.total_count
+      }
+      items.push(...batch)
+      url = nextLink(response.headers.get('link'))
+    }
+    if (total !== undefined && total !== items.length) throw new Error('GitHub API returned incomplete evidence.')
+    return items
   }
-  const json = args => {
-    try { return JSON.parse(run('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })) }
-    catch { throw new Error('GitHub could not provide pull-request/check evidence; refusing release') }
+  return {
+    async pullsForCommit(repo, sha) {
+      return pages(`/repos/${repo}/commits/${sha}/pulls?per_page=100`, body => body)
+    },
+    async pullRequestChecks(repo, headSha) {
+      if (!/^[a-f\d]{40}$/i.test(headSha ?? '')) throw new Error('Pull request has no valid head SHA.')
+      const checkRuns = await pages(`/repos/${repo}/commits/${headSha}/check-runs?filter=latest&per_page=100`, body => body?.check_runs)
+      if (checkRuns.some(check => check.head_sha !== headSha)) throw new Error('Check runs do not prove the pull request head.')
+      const statuses = await pages(`/repos/${repo}/commits/${headSha}/status?per_page=100`, body => {
+        if (body?.sha !== headSha) throw new Error('Combined status does not prove the pull request head.')
+        // GitHub returns pending when there are NO legacy status contexts. Check runs still decide.
+        if (body.total_count > 0 && body.state !== 'success') throw new Error('Pull request combined status is not green.')
+        return body.statuses
+      })
+      return { headRefOid: headSha, statusCheckRollup: [
+        ...checkRuns.map(check => ({ __typename: 'CheckRun', name: check.name,
+          status: check.status?.toUpperCase(), conclusion: check.conclusion?.toUpperCase(), completedAt: check.completed_at })),
+        ...statuses.map(status => ({ __typename: 'StatusContext', context: status.context,
+          state: status.state?.toUpperCase(), completedAt: status.updated_at ?? status.created_at })),
+      ] }
+    },
   }
-  // Paginate: merely finding a PR that contains this commit is not enough. It must have merged it.
-  const pages = json(['api', '--paginate', '--slurp', `repos/${repo}/commits/${sha}/pulls?per_page=100`])
-  const candidates = pages.flat().filter(pr => pr.state === 'closed' && pr.merged_at
-    && pr.merge_commit_sha === sha && pr.base?.ref === branch && pr.base?.repo?.full_name === repo)
-  if (!candidates.length) throw new Error('Commit did not reach the default branch through a merged pull request')
-  const pr = candidates[0]
-  // GitHub's PR rollup includes the checks run on the PR test-merge, unlike head-only REST checks.
-  const evidence = json(['pr', 'view', String(pr.number), '--repo', repo,
-    '--json', 'state,baseRefName,mergeCommit,headRefOid,mergedAt,statusCheckRollup'])
-  assertGreenPullRequest(evidence, { sha, head: pr.head.sha, branch })
+}
+
+export async function checkMainPr({ repo, sha, ref, branch, github }) {
+  // Owner: letters, digits, hyphens. Name: never `.` or `..`, which would walk the API URL path.
+  if (!/^[A-Za-z\d-]+\/(?!\.\.?$)[\w.-]+$/.test(repo ?? '') || !/^[a-f\d]{40}$/i.test(sha ?? '')) {
+    throw new Error('Expected GITHUB_REPOSITORY and a full GITHUB_SHA.')
+  }
+  if (!branch || ref !== `refs/heads/${branch}`) {
+    throw new Error('Release provenance requires the default branch ref.')
+  }
+  const client = github ?? githubClient()
+  const pr = mergedPullRequest(await client.pullsForCommit(repo, sha), { repo, sha, branch })
+  assertGreenPullRequest(pr, await client.pullRequestChecks(repo, pr.head?.sha))
   return pr.number
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const number = checkMainPr({ repo: process.env.GITHUB_REPOSITORY, sha: process.env.GITHUB_SHA,
+    const number = await checkMainPr({ repo: process.env.GITHUB_REPOSITORY, sha: process.env.GITHUB_SHA,
       ref: process.env.GITHUB_REF, branch: process.env.DEFAULT_BRANCH })
-    console.log(`Release commit came from merged PR #${number}, with green checks before merge.`)
+    console.log(`Release provenance passed: merged PR #${number} with green checks.`)
   } catch (error) {
     console.error(`::error::${error.message}`)
     process.exitCode = 1
