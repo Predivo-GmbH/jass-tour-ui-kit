@@ -11,7 +11,7 @@ permissions:
 jobs:
   ping:
     # Public repository: GitHub-hosted runners only (SR-SUP-08; reviewed 2026-11-04).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Ping Supabase (real DB query via GraphQL)

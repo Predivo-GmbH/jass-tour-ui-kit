@@ -23,7 +23,7 @@ permissions:
 jobs:
   main-pr:
     # This also checks the exact SHA selected for a manual production promotion.
-    runs-on: ubuntu-latest # Public repository; reviewed 2026-11-04 (SR-SUP-08).
+    runs-on: ubuntu-24.04 # Public repository; reviewed 2026-11-04 (SR-SUP-08).
     timeout-minutes: 5
     permissions:
       contents: read
@@ -47,7 +47,7 @@ jobs:
   validate:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     # Public repository: GitHub-hosted runners only (SR-SUP-08; reviewed 2026-11-04).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -119,7 +119,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     needs: validate
     # Public repository: GitHub-hosted runners only (SR-SUP-08; reviewed 2026-11-04).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -171,7 +171,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'deploy' && github.ref == 'refs/heads/main'
     needs: [main-pr, validate, gate-security]
     # Public repository: GitHub-hosted runners only (SR-SUP-08; reviewed 2026-11-04).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     # SR-HOST-06: production FTP settings stay unchanged until three staging deploys
     # pass with tertia.sui-inter.net, certificate verification and PROT P (deploy-standard §5d).
