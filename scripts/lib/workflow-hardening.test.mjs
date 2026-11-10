@@ -96,7 +96,7 @@ test('permissions mutation rejects a write default', () => {
 test('public Jass Tour workflows always run on GitHub-hosted runners with tagged action pins', () => {
   for (const file of filesUnder(directory)) {
     const text = fs.readFileSync(file, 'utf8')
-    for (const [, runner] of text.matchAll(/^\s+runs-on:\s*([^#\n]+)/gm)) assert.equal(runner.trim(), 'ubuntu-latest', file)
+    for (const [, runner] of text.matchAll(/^\s+runs-on:\s*([^#\n]+)/gm)) assert.equal(runner.trim(), 'ubuntu-24.04', file)
     for (const [, use] of text.matchAll(/^\s+(?:- )?uses:\s*(.+)$/gm)) {
       if (!use.startsWith('./')) assert.match(use, /@[a-f\d]{40}\s+# v[\d.]+/, file)
     }

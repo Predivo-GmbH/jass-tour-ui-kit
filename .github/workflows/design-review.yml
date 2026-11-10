@@ -36,7 +36,7 @@ jobs:
       && github.event.pull_request.user.login != 'dependabot[bot]'
       && github.event.pull_request.user.login != 'renovate[bot]'
     # Public repository: GitHub-hosted runners only (SR-SUP-08; reviewed 2026-11-04).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # A reviewer that cannot run must NOT report success. Until 2026-08-28 a missing key
     # only printed a warning and this job went green in 11 seconds having read nothing, so
