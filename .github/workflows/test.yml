@@ -72,9 +72,16 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
+      - name: Playwright's system packages from earlier runs (an Ubuntu mirror outage then costs nothing)
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/playwright-debs
+          key: playwright-debs-${{ runner.os }}-${{ hashFiles('package-lock.json', '*/package-lock.json') }}
+          restore-keys: playwright-debs-${{ runner.os }}-
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: bash "$GITHUB_WORKSPACE/.github/gate-kit/scripts/install-playwright.sh" chromium
 
       - name: Verify production stylesheet compatibility
         run: npm run test:styles
