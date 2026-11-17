@@ -1,0 +1,18 @@
+{
+  "$schema_note": "Read by production-monitor's weekly fleet dependency audit (scripts/check-fleet-dependency-audit.mjs, applyAllowlist). Every entry is a high or critical advisory this product knowingly carries because no fixed version exists. An entry matches on `advisory` (the GHSA id) AND `package`, so the same GHSA under a different package, or a NEW advisory against a listed package, is still filed. Past `review_by` the entry stops counting and the audit files the board row again. Same file and shape as ChannelMover's scripts/audit-allowlist.json, which its release gate (scripts/audit-gate.mjs) also reads.",
+  "entries": [
+    {
+      "exception": "Build tool only: in jass-tour-ui-kit picomatch is used only by the build and test tooling (Vite, Vitest, fdir, tinyglobby and @rollup/pluginutils), which matches our own file patterns with no outside input, and no fixed picomatch exists (every release up to 4.0.7, the newest, is affected); accepted by Roger 17.11.2026 (pop-up) for 30 days.",
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "severity": "high",
+      "title": "picomatch vulnerable to ReDoS through single-branch repeated extglobs",
+      "vulnerable_range": "<=4.0.7",
+      "no_fix_because": "GitHub advisory updated 2026-11-17 15:56Z: picomatch <=4.0.7 affected, first_patched_version null; npm's newest picomatch is 4.0.7. When a fixed release ships, the next dependency update removes the finding and this entry turns stale; delete it then.",
+      "reached_via": "vite / vitest / @rollup/pluginutils -> picomatch 4.0.7; vite -> fdir, tinyglobby -> picomatch (devDependencies only)",
+      "accepted_by": "Roger",
+      "accepted_on": "2026-11-17",
+      "review_by": "2026-12-17"
+    }
+  ]
+}
